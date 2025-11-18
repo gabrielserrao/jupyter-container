@@ -1,5 +1,6 @@
 # Build stage
 ARG PYTHON_VERSION=3.12-slim-bullseye
+# Use a minimal Debian image for the builder
 FROM python:${PYTHON_VERSION} AS builder
 
 # Create virtual environment
@@ -11,6 +12,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     # Standard Python build dependencies
     libssl-dev zlib1g-dev libbz2-dev libreadline-dev libsqlite3-dev libncursesw5-dev \
     xz-utils tk-dev libxml2-dev libxmlsec1-dev libffi-dev liblzma-dev \
+    # Utility needed for downloading the Gmsh executable
+    wget \
     # --- CRITICAL FIXES FOR PyVista/VTK (libX11.so.6 and GL) ---
     libx11-6 \
     libxext6 \
@@ -30,37 +33,45 @@ RUN pip install --no-cache-dir --upgrade pip \
     numpy pandas matplotlib seaborn scikit-learn \
     open-darts \
     pyvista \
-    # --- FIX for Gmsh Assertion Error (install Python bindings) ---
+    # Gmsh Python bindings (separate from the executable)
     gmsh \
-    # -------------------------------------------------------------
     && jupyter notebook --generate-config \
     && rm -rf /root/.cache/pip/*
 
+# --------------------------------------------------------------------------
 # Final stage
+# --------------------------------------------------------------------------
 FROM python:${PYTHON_VERSION}
 
 ARG NOTEBOOKS_DIR=/notebooks
 ARG VOLUME_MOUNT_PATH=/notebooks/volume
 
+# Set Python Path and Jupyter environment
 ENV PATH=/opt/venv/bin:$PATH
-# --- Headless Rendering Fix: Tell PyVista and VTK not to open a window ---
+ENV JUPYTER_IP=0.0.0.0
+ENV PORT=8888
+ENV NOTEBOOKS_DIR=${NOTEBOOKS_DIR}
+# --- Headless Rendering Fix: Critical for PyVista/VTK ---
 ENV PYVISTA_OFF_SCREEN=true
-# ----------------------------------------------------------------------
-
+# -------------------------------------------------------
 
 # Copy virtual env from builder
 COPY --from=builder /opt/venv /opt/venv
 
-# Install runtime dependencies and ensure X11/GL libraries are present in final image
+# Install runtime dependencies, X11/GL libraries, and the GMSH EXECUTABLE
 RUN apt-get update && apt-get install -y --no-install-recommends \
     git \
-    # --- CRITICAL FIXES REPEATED FOR FINAL STAGE ---
-    libx11-6 \
-    libxext6 \
-    libxrender1 \
-    libgl1-mesa-glx \
-    xvfb \
-    # -----------------------------------------------
+    # --- CRITICAL FIXES REPEATED FOR FINAL STAGE (X11/GL/Xvfb) ---
+    libx11-6 libxext6 libxrender1 libgl1-mesa-glx xvfb wget \
+    # ---------------------------------------------------------------
+    # --- CRITICAL FIX: MANUALLY INSTALL GMSH EXECUTABLE (v4.13.1) ---
+    && GMSH_VERSION="4.13.1" \
+    && GMSH_DEB="gmsh_${GMSH_VERSION}_amd64.deb" \
+    && wget -O /tmp/$GMSH_DEB "https://gmsh.info/bin/Linux/gmsh-${GMSH_VERSION}-Linux64.deb" \
+    # Install the package and automatically install any missing dependencies
+    && dpkg -i /tmp/$GMSH_DEB || apt-get install -fy \
+    && rm -f /tmp/$GMSH_DEB \
+    # ----------------------------------------------------------------
     && rm -rf /var/lib/apt/lists/*
 
 # Copy and run install scripts
@@ -96,7 +107,7 @@ WORKDIR /notebooks
 # Expose Jupyter port
 EXPOSE 8888
 
-# Create jupyter runner script (simplified without user permissions)
+# Create jupyter runner script
 RUN printf "#!/bin/bash\n" > /opt/jupyter_runner.sh && \
     printf "cd ${NOTEBOOKS_DIR} && jupyter notebook --ip=\${JUPYTER_IP:-0.0.0.0} --port=\${PORT:-8888} --no-browser --allow-root --NotebookApp.password=\$(python -c \"from jupyter_server.auth import passwd; print(passwd('\$JUPYTER_PASSWORD'))\") --NotebookApp.allow_root=True\n" >> /opt/jupyter_runner.sh && \
     chmod +x /opt/jupyter_runner.sh
