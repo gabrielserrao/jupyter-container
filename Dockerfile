@@ -1,6 +1,5 @@
 # Build stage
 ARG PYTHON_VERSION=3.12-slim-bullseye
-# Use a minimal Debian image for the builder
 FROM python:${PYTHON_VERSION} AS builder
 
 # Create virtual environment
@@ -33,7 +32,7 @@ RUN pip install --no-cache-dir --upgrade pip \
     numpy pandas matplotlib seaborn scikit-learn \
     open-darts \
     pyvista \
-    # Gmsh Python bindings (separate from the executable)
+    # Gmsh Python bindings
     gmsh \
     && jupyter notebook --generate-config \
     && rm -rf /root/.cache/pip/*
@@ -43,17 +42,21 @@ RUN pip install --no-cache-dir --upgrade pip \
 # --------------------------------------------------------------------------
 FROM python:${PYTHON_VERSION}
 
+# Define and set environment variables
 ARG NOTEBOOKS_DIR=/notebooks
 ARG VOLUME_MOUNT_PATH=/notebooks/volume
+ARG REPO_DIR=/notebooks/repo
+ARG CLONE_ROOT=/notebooks/workspaces
 
-# Set Python Path and Jupyter environment
 ENV PATH=/opt/venv/bin:$PATH
 ENV JUPYTER_IP=0.0.0.0
 ENV PORT=8888
 ENV NOTEBOOKS_DIR=${NOTEBOOKS_DIR}
-# --- Headless Rendering Fix: Critical for PyVista/VTK ---
-ENV PYVISTA_OFF_SCREEN=true
-# -------------------------------------------------------
+ENV REPO_DIR=${REPO_DIR}
+ENV CLONE_ROOT=${CLONE_ROOT}
+ENV CLONE_COUNT=30
+# Headless Rendering Fix
+ENV PYVISTA_OFF_SCREEN=true 
 
 # Copy virtual env from builder
 COPY --from=builder /opt/venv /opt/venv
@@ -68,7 +71,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && GMSH_VERSION="4.13.1" \
     && GMSH_DEB="gmsh_${GMSH_VERSION}_amd64.deb" \
     && wget -O /tmp/$GMSH_DEB "https://gmsh.info/bin/Linux/gmsh-${GMSH_VERSION}-Linux64.deb" \
-    # Install the package and automatically install any missing dependencies
     && dpkg -i /tmp/$GMSH_DEB || apt-get install -fy \
     && rm -f /tmp/$GMSH_DEB \
     # ----------------------------------------------------------------
@@ -83,15 +85,16 @@ RUN chmod +x /opt/install_packages.sh && chmod +x /opt/pull_repo.sh
 ARG GITHUB_REPO
 ARG GITHUB_BRANCH=main
 ARG GITHUB_TOKEN
-ARG REPO_DIR=/notebooks/repo
 ARG PY_REQUIREMENTS
 
-# Remove the user setup section and related chown commands
+# Create directories
 RUN mkdir -p "${NOTEBOOKS_DIR}/samples" && \
     mkdir -p "${VOLUME_MOUNT_PATH}" && \
+    # Create the source repo directory which will be cloned at runtime
+    mkdir -p "${REPO_DIR}" && \
     chmod -R 777 "${VOLUME_MOUNT_PATH}"
 
-# Pull GitHub repository if GITHUB_REPO is provided
+# Pull GitHub repository into the source directory
 RUN if [ ! -z "$GITHUB_REPO" ]; then \
         /opt/pull_repo.sh "$GITHUB_REPO" "$GITHUB_BRANCH" "$REPO_DIR"; \
     fi
@@ -102,14 +105,32 @@ RUN /opt/install_packages.sh "${PY_REQUIREMENTS}" "${NOTEBOOKS_DIR}"
 # Copy samples
 COPY ./samples "${NOTEBOOKS_DIR}/samples"
 
+# Set initial working directory to the root containing the clones
 WORKDIR /notebooks
 
 # Expose Jupyter port
 EXPOSE 8888
 
-# Create jupyter runner script
+# Create jupyter runner script (NOW WITH CLONING LOGIC)
 RUN printf "#!/bin/bash\n" > /opt/jupyter_runner.sh && \
-    printf "cd ${NOTEBOOKS_DIR} && jupyter notebook --ip=\${JUPYTER_IP:-0.0.0.0} --port=\${PORT:-8888} --no-browser --allow-root --NotebookApp.password=\$(python -c \"from jupyter_server.auth import passwd; print(passwd('\$JUPYTER_PASSWORD'))\") --NotebookApp.allow_root=True\n" >> /opt/jupyter_runner.sh && \
+    printf "set -e\n" >> /opt/jupyter_runner.sh && \
+    \
+    printf "echo \"Setting up \${CLONE_COUNT} isolated workspaces...\"\n" >> /opt/jupyter_runner.sh && \
+    printf "mkdir -p \${CLONE_ROOT}\n" >> /opt/jupyter_runner.sh && \
+    \
+    # Cloning loop
+    printf "for i in \$(seq 1 \${CLONE_COUNT}); do\n" >> /opt/jupyter_runner.sh && \
+    printf "  TARGET_DIR=\"\${CLONE_ROOT}/workspace_\$(printf \"%%02d\" \$i)\"\n" >> /opt/jupyter_runner.sh && \
+    printf "  if [ ! -d \"\${TARGET_DIR}\" ]; then\n" >> /opt/jupyter_runner.sh && \
+    /* Copy the entire source repo contents into a new workspace */
+    printf "    cp -r \${REPO_DIR} \${TARGET_DIR}\n" >> /opt/jupyter_runner.sh && \
+    printf "    echo \"Created workspace \${i}\"\n" >> /opt/jupyter_runner.sh && \
+    printf "  fi\n" >> /opt/jupyter_runner.sh && \
+    printf "done\n" >> /opt/jupyter_runner.sh && \
+    \
+    printf "echo \"Starting Jupyter Notebook in \${CLONE_ROOT}...\"\n" >> /opt/jupyter_runner.sh && \
+    /* Start Jupyter pointing to the CLONE_ROOT, allowing the user to pick their workspace */
+    printf "jupyter notebook --ip=\${JUPYTER_IP} --port=\${PORT} --no-browser --allow-root --NotebookApp.password=\$(python -c \"from jupyter_server.auth import passwd; print(passwd('\$JUPYTER_PASSWORD'))\") --NotebookApp.allow_root=True --NotebookApp.root_dir='/notebooks'\n" >> /opt/jupyter_runner.sh && \
     chmod +x /opt/jupyter_runner.sh
 
 CMD ["sh", "-c", "/opt/jupyter_runner.sh"]
