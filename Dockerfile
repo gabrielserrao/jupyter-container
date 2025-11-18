@@ -112,25 +112,27 @@ WORKDIR /notebooks
 # Expose Jupyter port
 EXPOSE 8888
 
-# Create jupyter runner script (WITH CLONING LOGIC)
-RUN printf "#!/bin/bash\n" > /opt/jupyter_runner.sh && \
-    printf "set -e\n" >> /opt/jupyter_runner.sh && \
-    \
-    printf "echo \"Setting up \${CLONE_COUNT} isolated workspaces...\"\n" >> /opt/jupyter_runner.sh && \
-    printf "mkdir -p \${CLONE_ROOT}\n" >> /opt/jupyter_runner.sh && \
-    \
-    # Cloning loop
-    printf "for i in \$(seq 1 \${CLONE_COUNT}); do\n" >> /opt/jupyter_runner.sh && \
-    printf "  TARGET_DIR=\"\${CLONE_ROOT}/workspace_\$(printf \"%%02d\" \$i)\"\n" >> /opt/jupyter_runner.sh && \
-    printf "  if [ ! -d \"\${TARGET_DIR}\" ]; then\n" >> /opt/jupyter_runner.sh && \
-    printf "    cp -r \${REPO_DIR} \${TARGET_DIR}\n" >> /opt/jupyter_runner.sh && \
-    printf "    echo \"Created workspace \${i}\"\n" >> /opt/jupyter_runner.sh && \
-    printf "  fi\n" >> /opt/jupyter_runner.sh && \
-    printf "done\n" >> /opt/jupyter_runner.sh && \
-    \
-    /* The final line is fixed to ensure proper continuation and parsing */ \
-    printf "echo \"Starting Jupyter Notebook...\"\n" >> /opt/jupyter_runner.sh && \
-    printf "jupyter notebook --ip=\${JUPYTER_IP} --port=\${PORT} --no-browser --allow-root --NotebookApp.password=\$(python -c \"from jupyter_server.auth import passwd; print(passwd('\$JUPYTER_PASSWORD'))\") --NotebookApp.allow_root=True --NotebookApp.root_dir='/notebooks'\n" >> /opt/jupyter_runner.sh && \
-    chmod +x /opt/jupyter_runner.sh
+# Create jupyter runner script (FIXED: Uses heredoc for stability)
+RUN cat > /opt/jupyter_runner.sh <<EOF
+#!/bin/bash
+set -e
+
+echo "Setting up \${CLONE_COUNT} isolated workspaces..."
+mkdir -p \${CLONE_ROOT}
+
+# Cloning loop
+for i in \$(seq 1 \${CLONE_COUNT}); do
+  TARGET_DIR="\${CLONE_ROOT}/workspace_\$(printf "%%02d" \$i)"
+  if [ ! -d "\${TARGET_DIR}" ]; then
+    cp -r \${REPO_DIR} \${TARGET_DIR}
+    echo "Created workspace \${i}"
+  fi
+done
+
+echo "Starting Jupyter Notebook..."
+jupyter notebook --ip=\${JUPYTER_IP} --port=\${PORT} --no-browser --allow-root --NotebookApp.password=\$(python -c "from jupyter_server.auth import passwd; print(passwd('\$JUPYTER_PASSWORD'))") --NotebookApp.allow_root=True --NotebookApp.root_dir='/notebooks'
+EOF
+
+RUN chmod +x /opt/jupyter_runner.sh
 
 CMD ["sh", "-c", "/opt/jupyter_runner.sh"]
