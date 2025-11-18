@@ -34,6 +34,8 @@ RUN pip install --no-cache-dir --upgrade pip \
     matplotlib \
     seaborn \
     scikit-learn \
+    open-darts\
+    pyvista\
     && jupyter notebook --generate-config \
     && rm -rf /root/.cache/pip/*
 
