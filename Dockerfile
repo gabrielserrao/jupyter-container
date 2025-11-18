@@ -13,13 +13,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     xz-utils tk-dev libxml2-dev libxmlsec1-dev libffi-dev liblzma-dev \
     # Utility needed for downloading the Gmsh executable
     wget \
-    # --- CRITICAL FIXES FOR PyVista/VTK (libX11.so.6 and GL) ---
+    # --- CRITICAL FIXES FOR PyVista/VTK (libX11.so.6, libGLU.so.1, and GL) ---
     libx11-6 \
     libxext6 \
     libxrender1 \
     libgl1-mesa-glx \
+    libglu1-mesa \
     xvfb \
-    # -----------------------------------------------------------
+    # -------------------------------------------------------------------------
     git \
     && rm -rf /var/lib/apt/lists/*
 
@@ -64,13 +65,14 @@ COPY --from=builder /opt/venv /opt/venv
 # Install runtime dependencies, X11/GL libraries, and the GMSH EXECUTABLE
 RUN apt-get update && apt-get install -y --no-install-recommends \
     git \
-    # --- CRITICAL FIXES REPEATED FOR FINAL STAGE (X11/GL/Xvfb) ---
-    libx11-6 libxext6 libxrender1 libgl1-mesa-glx xvfb wget \
-    # ---------------------------------------------------------------
+    # --- CRITICAL FIXES REPEATED FOR FINAL STAGE ---
+    libx11-6 libxext6 libxrender1 libgl1-mesa-glx xvfb wget libglu1-mesa \
+    # -----------------------------------------------
     # --- CRITICAL FIX: MANUALLY INSTALL GMSH EXECUTABLE (v4.13.1) ---
     && GMSH_VERSION="4.13.1" \
     && GMSH_DEB="gmsh_${GMSH_VERSION}_amd64.deb" \
     && wget -O /tmp/$GMSH_DEB "https://gmsh.info/bin/Linux/gmsh-${GMSH_VERSION}-Linux64.deb" \
+    # Install the package and automatically install any missing dependencies
     && dpkg -i /tmp/$GMSH_DEB || apt-get install -fy \
     && rm -f /tmp/$GMSH_DEB \
     # ----------------------------------------------------------------
@@ -90,7 +92,6 @@ ARG PY_REQUIREMENTS
 # Create directories
 RUN mkdir -p "${NOTEBOOKS_DIR}/samples" && \
     mkdir -p "${VOLUME_MOUNT_PATH}" && \
-    # Create the source repo directory which will be cloned at runtime
     mkdir -p "${REPO_DIR}" && \
     chmod -R 777 "${VOLUME_MOUNT_PATH}"
 
@@ -111,7 +112,7 @@ WORKDIR /notebooks
 # Expose Jupyter port
 EXPOSE 8888
 
-# Create jupyter runner script (NOW WITH CLONING LOGIC)
+# Create jupyter runner script (WITH CLONING LOGIC)
 RUN printf "#!/bin/bash\n" > /opt/jupyter_runner.sh && \
     printf "set -e\n" >> /opt/jupyter_runner.sh && \
     \
@@ -122,14 +123,13 @@ RUN printf "#!/bin/bash\n" > /opt/jupyter_runner.sh && \
     printf "for i in \$(seq 1 \${CLONE_COUNT}); do\n" >> /opt/jupyter_runner.sh && \
     printf "  TARGET_DIR=\"\${CLONE_ROOT}/workspace_\$(printf \"%%02d\" \$i)\"\n" >> /opt/jupyter_runner.sh && \
     printf "  if [ ! -d \"\${TARGET_DIR}\" ]; then\n" >> /opt/jupyter_runner.sh && \
-    /* Copy the entire source repo contents into a new workspace */
     printf "    cp -r \${REPO_DIR} \${TARGET_DIR}\n" >> /opt/jupyter_runner.sh && \
     printf "    echo \"Created workspace \${i}\"\n" >> /opt/jupyter_runner.sh && \
     printf "  fi\n" >> /opt/jupyter_runner.sh && \
     printf "done\n" >> /opt/jupyter_runner.sh && \
     \
     printf "echo \"Starting Jupyter Notebook in \${CLONE_ROOT}...\"\n" >> /opt/jupyter_runner.sh && \
-    /* Start Jupyter pointing to the CLONE_ROOT, allowing the user to pick their workspace */
+    /* Start Jupyter pointing to the root directory */
     printf "jupyter notebook --ip=\${JUPYTER_IP} --port=\${PORT} --no-browser --allow-root --NotebookApp.password=\$(python -c \"from jupyter_server.auth import passwd; print(passwd('\$JUPYTER_PASSWORD'))\") --NotebookApp.allow_root=True --NotebookApp.root_dir='/notebooks'\n" >> /opt/jupyter_runner.sh && \
     chmod +x /opt/jupyter_runner.sh
 
