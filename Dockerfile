@@ -128,8 +128,8 @@ RUN printf "#!/bin/bash\n" > /opt/jupyter_runner.sh && \
     printf "  fi\n" >> /opt/jupyter_runner.sh && \
     printf "done\n" >> /opt/jupyter_runner.sh && \
     \
-    printf "echo \"Starting Jupyter Notebook in \${CLONE_ROOT}...\"\n" >> /opt/jupyter_runner.sh && \
-    /* Start Jupyter pointing to the root directory */
+    /* The final line is fixed to ensure proper continuation and parsing */ \
+    printf "echo \"Starting Jupyter Notebook...\"\n" >> /opt/jupyter_runner.sh && \
     printf "jupyter notebook --ip=\${JUPYTER_IP} --port=\${PORT} --no-browser --allow-root --NotebookApp.password=\$(python -c \"from jupyter_server.auth import passwd; print(passwd('\$JUPYTER_PASSWORD'))\") --NotebookApp.allow_root=True --NotebookApp.root_dir='/notebooks'\n" >> /opt/jupyter_runner.sh && \
     chmod +x /opt/jupyter_runner.sh
 
