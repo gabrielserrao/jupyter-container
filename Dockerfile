@@ -13,17 +13,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     xz-utils tk-dev libxml2-dev libxmlsec1-dev libffi-dev liblzma-dev \
     # Utility needed for downloading the Gmsh executable
     wget \
-    # --- ULTIMATE CRITICAL FIXES FOR PyVista/VTK/Gmsh (All shared object libs) ---
+    # --- CRITICAL FIXES FOR PyVista/VTK/Gmsh (All shared object libs) ---
     libx11-6 \
     libxext6 \
     libxrender1 \
     libgl1-mesa-glx \
     libglu1-mesa \
     xvfb \
-    # These are the additional X11 dependencies found in your working pipeline script:
     libxcursor1 \
     libxinerama1 \
-    # -----------------------------------------------------------------------------
+    # ---------------------------------------------------------------------
     git \
     && rm -rf /var/lib/apt/lists/*
 
@@ -68,16 +67,21 @@ COPY --from=builder /opt/venv /opt/venv
 # Install runtime dependencies, X11/GL libraries, and the GMSH EXECUTABLE
 RUN apt-get update && apt-get install -y --no-install-recommends \
     git \
-    # --- CRITICAL FIXES REPEATED FOR FINAL STAGE (All X11/GL/Xvfb) ---
+    # --- CRITICAL FIXES REPEATED FOR FINAL STAGE ---
     libx11-6 libxext6 libxrender1 libgl1-mesa-glx xvfb wget libglu1-mesa \
     libxcursor1 libxinerama1 \
-    # -----------------------------------------------------------------
+    # -----------------------------------------------
     # --- CRITICAL FIX: MANUALLY INSTALL GMSH EXECUTABLE (v4.13.1) ---
     && GMSH_VERSION="4.13.1" \
     && GMSH_DEB="gmsh_${GMSH_VERSION}_amd64.deb" \
     && wget -O /tmp/$GMSH_DEB "https://gmsh.info/bin/Linux/gmsh-${GMSH_VERSION}-Linux64.deb" \
     # Install the package and automatically install any missing dependencies
     && dpkg -i /tmp/$GMSH_DEB || apt-get install -fy \
+    \
+    # *** FINAL GMSH PATH FIX: Create Symbolic Link ***
+    # This ensures the 'gmsh' command is available on the system PATH.
+    && ln -s /usr/lib/gmsh/gmsh /usr/local/bin/gmsh \
+    \
     && rm -f /tmp/$GMSH_DEB \
     # ----------------------------------------------------------------
     && rm -rf /var/lib/apt/lists/*
